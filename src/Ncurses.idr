@@ -90,6 +90,12 @@ putStrLn w s = putStr w (s ++ "\n")
 move : Window -> Int -> Int -> NcursesIO ()
 move (WindowPtr p) y x = liftError $ foreign FFI_C "wmove" (Ptr -> Int -> Int -> IO Int) p y x
 
+getYX : Window -> NcursesIO (Int, Int)
+getYX (WindowPtr p) = liftIO $ do
+  x <- foreign FFI_C "idr_getX" (Ptr -> IO Int) p
+  y <- foreign FFI_C "idr_getY" (Ptr -> IO Int) p
+  pure (y, x)
+
 --
 -- Input Options
 --

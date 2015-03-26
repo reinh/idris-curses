@@ -11,6 +11,8 @@ loop w = do
     Just 113 => endwin
     _        => do
       putStrLn w ("Pressed <" ++ show x ++ ">")
+      (y, x) <- getYX w
+      move w (y - 1) x
       loop w
 
 main : IO ()
