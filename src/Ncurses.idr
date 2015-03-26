@@ -77,8 +77,9 @@ endwin = liftError $ mkForeign (FFun "endwin" [] FInt)
 refresh : Window -> NcursesIO ()
 refresh (WindowPtr p) = liftError $ mkForeign (FFun "wrefresh" [FPtr] FInt) p
 
-getch : Window -> NcursesIO ()
-getch (WindowPtr p) = liftError $ mkForeign (FFun "wgetch" [FPtr] FInt) p
+getch : Window -> NcursesIO (Maybe Int)
+getch (WindowPtr p) = liftIO (map go (mkForeign (FFun "wgetch" [FPtr] FInt) p)) where
+  go chr = if chr == -1 then Nothing else Just chr
 
 putStr : Window -> String -> NcursesIO ()
 putStr (WindowPtr ptr) s = liftError $ mkForeign (FFun "wprintw" [FPtr, FString] FInt) ptr s
