@@ -9,7 +9,9 @@ loop w = do
     Just 27  => endwin
     Just 81  => endwin
     Just 113 => endwin
-    _        => loop w
+    _        => do
+      putStrLn w ("Pressed <" ++ show x ++ ">")
+      loop w
 
 main : IO ()
 main = ncursesMain $ do

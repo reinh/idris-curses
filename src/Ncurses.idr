@@ -22,12 +22,12 @@ instance Functor NcursesIO where
 
 instance Applicative NcursesIO where
   pure a = ncursesIO (pure (pure a))
-  (ncursesIO f) <$> (ncursesIO a) = ncursesIO io where
+  (ncursesIO f) <*> (ncursesIO a) = ncursesIO io where
     io : IO (Either NcursesError b)
     io = do
       f' <- f
       a' <- a
-      return (f' <$> a')
+      return (f' <*> a')
 
 instance Monad NcursesIO where
   (ncursesIO a) >>= k = ncursesIO io where
@@ -55,99 +55,102 @@ liftError code = ncursesIO (map liftErr code) where
 --
 
 lines : NcursesIO Int
-lines = liftIO $ mkForeign (FFun "getLines" [] FInt)
+lines = liftIO $ foreign FFI_C "getLines" (IO Int)
 
 cols : NcursesIO Int
-cols = liftIO $ mkForeign (FFun "getCols" [] FInt)
+cols = liftIO $ foreign FFI_C "getCols" (IO Int)
 
 --
 -- Window/Screen Management
 --
 
 initscr : NcursesIO Window
-initscr = liftIO $ map WindowPtr $ mkForeign (FFun "initscr" [] FPtr)
+initscr = liftIO $ map WindowPtr $ foreign FFI_C "initscr" (IO Ptr)
 
 endwin : NcursesIO ()
-endwin = liftError $ mkForeign (FFun "endwin" [] FInt)
+endwin = liftError $ foreign FFI_C "endwin" (IO Int)
 
 --
 -- I/O
 --
 
 refresh : Window -> NcursesIO ()
-refresh (WindowPtr p) = liftError $ mkForeign (FFun "wrefresh" [FPtr] FInt) p
+refresh (WindowPtr p) = liftError $ foreign FFI_C "wrefresh" (Ptr -> IO Int) p
 
 getch : Window -> NcursesIO (Maybe Int)
-getch (WindowPtr p) = liftIO (map go (mkForeign (FFun "wgetch" [FPtr] FInt) p)) where
-  go chr = if chr == -1 then Nothing else Just chr
+getch (WindowPtr p) = liftIO (map go (foreign FFI_C "wgetch" (Ptr -> IO Int) p))
+  where go chr = if chr == -1 then Nothing else Just chr
 
 putStr : Window -> String -> NcursesIO ()
-putStr (WindowPtr ptr) s = liftError $ mkForeign (FFun "wprintw" [FPtr, FString] FInt) ptr s
+putStr (WindowPtr ptr) s = liftError $ foreign FFI_C "wprintw" (Ptr -> String -> IO Int) ptr s
 
 putStrLn : Window -> String -> NcursesIO ()
 putStrLn w s = putStr w (s ++ "\n")
+
+move : Window -> Int -> Int -> NcursesIO ()
+move (WindowPtr p) y x = liftError $ foreign FFI_C "wmove" (Ptr -> Int -> Int -> IO Int) p y x
 
 --
 -- Input Options
 --
 
 cbreak : NcursesIO ()
-cbreak = liftError $ mkForeign (FFun "cbreak" [] FInt)
+cbreak = liftError $ foreign FFI_C "cbreak" (IO Int)
 
 nocbreak : NcursesIO ()
-nocbreak = liftError $ mkForeign (FFun "nocbreak" [] FInt)
+nocbreak = liftError $ foreign FFI_C "nocbreak" (IO Int)
 
 echo : NcursesIO ()
-echo = liftError $ mkForeign (FFun "echo" [] FInt)
+echo = liftError $ foreign FFI_C "echo" (IO Int)
 
 noecho : NcursesIO ()
-noecho = liftError $ mkForeign (FFun "noecho" [] FInt)
+noecho = liftError $ foreign FFI_C "noecho" (IO Int)
 
 halfdelay : NcursesIO ()
-halfdelay = liftError $ mkForeign (FFun "halfdelay" [] FInt)
+halfdelay = liftError $ foreign FFI_C "halfdelay" (IO Int)
 
 intrflush : Window -> Bool -> NcursesIO ()
 intrflush (WindowPtr ptr) p =
-  liftError $ mkForeign (FFun "intrflush" [FPtr, FInt] FInt) ptr (cBool p)
+  liftError $ foreign FFI_C "intrflush" (Ptr -> Int -> IO Int) ptr (cBool p)
 
 keypad : Window -> Bool -> NcursesIO ()
 keypad (WindowPtr ptr) p =
-  liftError $ mkForeign (FFun "keypad" [FPtr, FInt] FInt) ptr (cBool p)
+  liftError $ foreign FFI_C "keypad" (Ptr -> Int -> IO Int) ptr (cBool p)
 
 meta : Window -> Bool -> NcursesIO ()
 meta (WindowPtr ptr) p =
-  liftError $ mkForeign (FFun "meta" [FPtr, FInt] FInt) ptr (cBool p)
+  liftError $ foreign FFI_C "meta" (Ptr -> Int -> IO Int) ptr (cBool p)
 
 nodelay : Window -> Bool -> NcursesIO ()
 nodelay (WindowPtr ptr) p =
-  liftError $ mkForeign (FFun "nodelay" [FPtr, FInt] FInt) ptr (cBool p)
+  liftError $ foreign FFI_C "nodelay" (Ptr -> Int -> IO Int) ptr (cBool p)
 
 raw : NcursesIO ()
-raw = liftError $ mkForeign (FFun "raw" [] FInt)
+raw = liftError $ foreign FFI_C "raw" (IO Int)
 
 noraw : NcursesIO ()
-noraw = liftError $ mkForeign (FFun "noraw" [] FInt)
+noraw = liftError $ foreign FFI_C "noraw" (IO Int)
 
 noqiflush : NcursesIO ()
-noqiflush = liftIO $ mkForeign (FFun "noqiflush" [] FUnit)
+noqiflush = liftIO $ foreign FFI_C "noqiflush" (IO Unit)
 
 qiflush : NcursesIO ()
-qiflush = liftIO $ mkForeign (FFun "qiflush" [] FUnit)
+qiflush = liftIO $ foreign FFI_C "qiflush" (IO Unit)
 
 notimeout : Window -> Bool -> NcursesIO ()
 notimeout (WindowPtr ptr) p =
-  liftError $ mkForeign (FFun "notimeout" [FPtr, FInt] FInt) ptr (cBool p)
+  liftError $ foreign FFI_C "notimeout" (Ptr -> Int -> IO Int) ptr (cBool p)
 
 timeout : Int -> NcursesIO ()
-timeout delay = liftIO $ mkForeign (FFun "timeout" [FInt] FUnit) delay
+timeout delay = liftIO $ foreign FFI_C "timeout" (Int -> IO Unit) delay
 
 wtimeout : Window -> Int -> NcursesIO ()
 wtimeout (WindowPtr ptr) delay =
-  liftIO $ mkForeign (FFun "wtimeout" [FPtr, FInt] FUnit) ptr delay
+  liftIO $ foreign FFI_C "wtimeout" (Ptr -> Int -> IO Unit) ptr delay
 
 -- fd is a file descriptor? What to do...
 typeahead : Int -> NcursesIO ()
-typeahead fd = liftError $ mkForeign (FFun "typeahead" [FInt] FInt) fd
+typeahead fd = liftError $ foreign FFI_C "typeahead" (Int -> IO Int) fd
 
 --
 -- Output Options.
@@ -155,41 +158,41 @@ typeahead fd = liftError $ mkForeign (FFun "typeahead" [FInt] FInt) fd
 
 clearok : Window -> Bool -> NcursesIO ()
 clearok (WindowPtr ptr) p =
-  liftError $ mkForeign (FFun "clearok" [FPtr, FInt] FInt) ptr (cBool p)
+  liftError $ foreign FFI_C "clearok" (Ptr -> Int -> IO Int) ptr (cBool p)
 
 idlok : Window -> Bool -> NcursesIO ()
 idlok (WindowPtr ptr) p =
-  liftError $ mkForeign (FFun "idlok" [FPtr, FInt] FInt) ptr (cBool p)
+  liftError $ foreign FFI_C "idlok" (Ptr -> Int -> IO Int) ptr (cBool p)
 
 idcok : Window -> Bool -> NcursesIO ()
 idcok (WindowPtr ptr) p =
-  liftIO $ mkForeign (FFun "idcok" [FPtr, FInt] FUnit) ptr (cBool p)
+  liftIO $ foreign FFI_C "idcok" (Ptr -> Int -> IO Unit) ptr (cBool p)
 
 immedok : Window -> Bool -> NcursesIO ()
 immedok (WindowPtr ptr) p =
-  liftIO $ mkForeign (FFun "immedok" [FPtr, FInt] FUnit) ptr (cBool p)
+  liftIO $ foreign FFI_C "immedok" (Ptr -> Int -> IO Unit) ptr (cBool p)
 
 leaveok : Window -> Bool -> NcursesIO ()
 leaveok (WindowPtr ptr) p =
-  liftError $ mkForeign (FFun "leaveok" [FPtr, FInt] FInt) ptr (cBool p)
+  liftError $ foreign FFI_C "leaveok" (Ptr -> Int -> IO Int) ptr (cBool p)
 
 setscrreg : Int -> Int -> NcursesIO ()
 setscrreg top bot =
-  liftError $ mkForeign (FFun "setscrreg" [FInt, FInt] FInt) top bot
+  liftError $ foreign FFI_C "setscrreg" (Int -> Int -> IO Int) top bot
 
 wsetscrreg : Window -> Int -> Int -> NcursesIO ()
 wsetscrreg (WindowPtr ptr) top bot =
-  liftError $ mkForeign (FFun "wsetscrreg" [FPtr, FInt, FInt] FInt) ptr top bot
+  liftError $ foreign FFI_C "wsetscrreg" (Ptr -> Int -> Int -> IO Int) ptr top bot
 
 scrollok : Window -> Bool -> NcursesIO ()
 scrollok (WindowPtr ptr) p =
-  liftError $ mkForeign (FFun "scrollok" [FPtr, FInt] FInt) ptr (cBool p)
+  liftError $ foreign FFI_C "scrollok" (Ptr -> Int -> IO Int) ptr (cBool p)
 
 nl : NcursesIO ()
-nl = liftError $ mkForeign (FFun "nl" [] FInt)
+nl = liftError $ foreign FFI_C "nl" (IO Int)
 
 nonl : NcursesIO ()
-nonl = liftError $ mkForeign (FFun "nonl" [] FInt)
+nonl = liftError $ foreign FFI_C "nonl" (IO Int)
 
 runNcurses : (NcursesError -> IO b) -> (a -> IO b) -> NcursesIO a -> IO b
 runNcurses f g nio = do
@@ -201,6 +204,3 @@ runNcurses f g nio = do
 ncursesMain : NcursesIO () -> IO ()
 ncursesMain = runNcurses logError return where
   logError NullWindow = putStrLn "NULL window"
-
--- lines : IO Int
--- lines = mkForeign (FFun "LINES" [] FUnit) 
