@@ -5,6 +5,7 @@ modules = Ncurses, Main
 sourcedir = src
 main = Main
 executable = example
+opts = "-p effects"
 
 makefile = Makefile
 libs = ncurses

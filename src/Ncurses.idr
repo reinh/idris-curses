@@ -1,212 +1,241 @@
 module Ncurses
 
+import Effects
+
 %lib C "ncurses"
 %include C "Ncurses/ncurses_extra.h"
 %link C "Ncurses/ncurses_extra.o"
 
 %access public
 
-data NcursesError = NullWindow
-
-data NcursesIO : Type -> Type where
-  ncursesIO : IO (Either NcursesError a) -> NcursesIO a
-
-unliftIO : NcursesIO a -> IO (Either NcursesError a)
-unliftIO (ncursesIO ioe) = ioe
-
-liftIO : IO a -> NcursesIO a
-liftIO ioa = ncursesIO (map Right ioa)
-
-instance Functor NcursesIO where
-  map f (ncursesIO io) = ncursesIO (map (map f) io)
-
-instance Applicative NcursesIO where
-  pure a = ncursesIO (pure (pure a))
-  (ncursesIO f) <*> (ncursesIO a) = ncursesIO io where
-    io : IO (Either NcursesError b)
-    io = do
-      f' <- f
-      a' <- a
-      return (f' <*> a')
-
-instance Monad NcursesIO where
-  (ncursesIO a) >>= k = ncursesIO io where
-    io : IO (Either NcursesError b)
-    io = do
-      a' <- a
-      case a' of
-        Left err => return (Left err)
-        Right a => unliftIO (k a)
-
 data Window = WindowPtr Ptr
 
+-- XXX: A good chunk of this effect is copied semi-blindly from the File
+-- implementation, and might not be appropriate. In particular, this
+-- doesn't bother handling failure: instead, lots of the operations
+-- below just return Bool. There's probably a better way of handling
+-- failure in the Effect itself (rather than having to check on each
+-- individual operation.)
+abstract data Ncurses : Effect where
+  NewWindow   : {() ==> {res} if res then Window else ()} Ncurses Bool
+  NCAction    : (Window -> IO a) -> {Window} Ncurses a
+  CloseWindow : {Window ==> ()} Ncurses ()
+
+instance Handler Ncurses IO where
+  handle () NewWindow k = do
+    p <- foreign FFI_C "initscr" (IO Ptr)
+    isNull <- nullPtr p
+    if isNull then k False ()
+              else k True (WindowPtr p)
+  handle w (NCAction f) k = do
+    e <- f w
+    k e w
+  handle w CloseWindow k = do
+    foreign FFI_C "endwin" (IO Int)
+    k () ()
+
+-- This is also maybe not the best idea: the effect is here called
+-- CURSES', but because most of the time we're dealing either with
+-- an actively open ncurses session or simply a closed one, there
+-- are two aliases for those states called CURSES and CURSES_OFF,
+-- respectively. This might be a bad idea?
+CURSES' : Type -> EFFECT
+CURSES' t = MkEff t Ncurses
+
+CURSES : EFFECT
+CURSES = CURSES' Window
+
+CURSES_OFF : EFFECT
+CURSES_OFF = CURSES' ()
+
+-- These are used for converting from the C integer-ey representation
+-- to actual bools and vice versa!
 private
 cBool : Bool -> Int
 cBool True = 1
 cBool False = 0
 
 private
-liftError : IO Int -> NcursesIO ()
-liftError code = ncursesIO (map liftErr code) where
-  liftErr code = if code == -1 then Left NullWindow else Right ()
+boolC : Int -> Bool
+boolC 0 = False
+boolC _ = True
 
 --
 -- Global Variables
 --
 
-lines : NcursesIO Int
-lines = liftIO $ foreign FFI_C "getLines" (IO Int)
 
-cols : NcursesIO Int
-cols = liftIO $ foreign FFI_C "getCols" (IO Int)
+lines : {[CURSES]} Eff Int
+lines = call (NCAction (const (foreign FFI_C "getLines" (IO Int))))
+
+cols : {[CURSES]} Eff Int
+cols = call (NCAction (const (foreign FFI_C "getCols" (IO Int))))
 
 --
 -- Window/Screen Management
 --
 
-initscr : NcursesIO Window
-initscr = liftIO $ map WindowPtr $ foreign FFI_C "initscr" (IO Ptr)
+initscr : {[CURSES_OFF] ==> {result}
+           [CURSES' (if result
+                       then Window
+                       else ())]} Eff Bool
+initscr = call NewWindow
 
-endwin : NcursesIO ()
-endwin = liftError $ foreign FFI_C "endwin" (IO Int)
+endwin : {[CURSES] ==> [CURSES_OFF]} Eff ()
+endwin = call CloseWindow
 
 --
 -- I/O
 --
 
-refresh : Window -> NcursesIO ()
-refresh (WindowPtr p) = liftError $ foreign FFI_C "wrefresh" (Ptr -> IO Int) p
+refresh : {[CURSES]} Eff Bool
+refresh = call (NCAction go)
+  where go (WindowPtr p) = map boolC (foreign FFI_C "wrefresh" (Ptr -> IO Int) p)
 
-getch : Window -> NcursesIO (Maybe Int)
-getch (WindowPtr p) = liftIO (map go (foreign FFI_C "wgetch" (Ptr -> IO Int) p))
-  where go chr = if chr == -1 then Nothing else Just chr
+getch : {[CURSES]} Eff (Maybe Int)
+getch = call (NCAction go)
+  where chrFromInt : Int -> Maybe Int
+        chrFromInt n = if n < 0 then Nothing else Just n
+        go (WindowPtr p) = map chrFromInt (foreign FFI_C "wgetch" (Ptr -> IO Int) p)
 
-putStr : Window -> String -> NcursesIO ()
-putStr (WindowPtr ptr) s = liftError $ foreign FFI_C "wprintw" (Ptr -> String -> IO Int) ptr s
 
-putStrLn : Window -> String -> NcursesIO ()
-putStrLn w s = putStr w (s ++ "\n")
+putStr : String -> {[CURSES]} Eff ()
+putStr s = call (NCAction go)
+  where go (WindowPtr p) = map (const ()) (foreign FFI_C "wprintw" (Ptr -> String -> IO Int) p s)
 
-move : Window -> Int -> Int -> NcursesIO ()
-move (WindowPtr p) y x = liftError $ foreign FFI_C "wmove" (Ptr -> Int -> Int -> IO Int) p y x
+putStrLn : String -> {[CURSES]} Eff ()
+putStrLn s = putStr (s ++ "\n")
 
-getYX : Window -> NcursesIO (Int, Int)
-getYX (WindowPtr p) = liftIO $ do
-  x <- foreign FFI_C "idr_getX" (Ptr -> IO Int) p
-  y <- foreign FFI_C "idr_getY" (Ptr -> IO Int) p
-  pure (y, x)
+move : Int -> Int -> {[CURSES]} Eff ()
+move y x =  call (NCAction go)
+  where go (WindowPtr p) = map (const ()) (foreign FFI_C "wmove" (Ptr -> Int -> Int -> IO Int) p y x)
+
+getYX : {[CURSES]} Eff (Int, Int)
+getYX = call (NCAction go)
+  where go (WindowPtr p) = do
+          x <- foreign FFI_C "idr_getX" (Ptr -> IO Int) p
+          y <- foreign FFI_C "idr_getY" (Ptr -> IO Int) p
+          pure (y, x)
+
+--
+-- Wrapping helpers for curses operations
+--
+
+private
+boolAction : IO Int -> {[CURSES]} Eff Bool
+boolAction f = call (NCAction (const (map boolC f)))
+
+private
+nullAction : IO () -> {[CURSES]} Eff ()
+nullAction f = call (NCAction (const f))
+
+private
+windowSetAction : (Ptr -> Int -> IO Int) -> (Bool -> {[CURSES]} Eff Bool)
+windowSetAction f b = call (NCAction go)
+  where go (WindowPtr p) = map boolC (f p (cBool b))
+
+private
+windowSetAction' : (Ptr -> Int -> IO ()) -> (Bool -> {[CURSES]} Eff ())
+windowSetAction' f b = call (NCAction go)
+  where go (WindowPtr p) = f p (cBool b)
 
 --
 -- Input Options
 --
 
-cbreak : NcursesIO ()
-cbreak = liftError $ foreign FFI_C "cbreak" (IO Int)
+cbreak : {[CURSES]} Eff Bool
+cbreak = boolAction (foreign FFI_C "cbreak" (IO Int))
 
-nocbreak : NcursesIO ()
-nocbreak = liftError $ foreign FFI_C "nocbreak" (IO Int)
+nocbreak : {[CURSES]} Eff Bool
+nocbreak = boolAction (foreign FFI_C "nocbreak" (IO Int))
 
-echo : NcursesIO ()
-echo = liftError $ foreign FFI_C "echo" (IO Int)
+echo : {[CURSES]} Eff Bool
+echo = boolAction (foreign FFI_C "echo" (IO Int))
 
-noecho : NcursesIO ()
-noecho = liftError $ foreign FFI_C "noecho" (IO Int)
+noecho : {[CURSES]} Eff Bool
+noecho = boolAction (foreign FFI_C "noecho" (IO Int))
 
-halfdelay : NcursesIO ()
-halfdelay = liftError $ foreign FFI_C "halfdelay" (IO Int)
+halfdelay : {[CURSES]} Eff Bool
+halfdelay = boolAction (foreign FFI_C "halfdelay" (IO Int))
 
-intrflush : Window -> Bool -> NcursesIO ()
-intrflush (WindowPtr ptr) p =
-  liftError $ foreign FFI_C "intrflush" (Ptr -> Int -> IO Int) ptr (cBool p)
+intrflush : Bool -> {[CURSES]} Eff Bool
+intrflush = windowSetAction (foreign FFI_C "intrflush" (Ptr -> Int -> IO Int))
 
-keypad : Window -> Bool -> NcursesIO ()
-keypad (WindowPtr ptr) p =
-  liftError $ foreign FFI_C "keypad" (Ptr -> Int -> IO Int) ptr (cBool p)
 
-meta : Window -> Bool -> NcursesIO ()
-meta (WindowPtr ptr) p =
-  liftError $ foreign FFI_C "meta" (Ptr -> Int -> IO Int) ptr (cBool p)
+keypad : Bool -> {[CURSES]} Eff Bool
+keypad = windowSetAction (foreign FFI_C "keypad" (Ptr -> Int -> IO Int))
 
-nodelay : Window -> Bool -> NcursesIO ()
-nodelay (WindowPtr ptr) p =
-  liftError $ foreign FFI_C "nodelay" (Ptr -> Int -> IO Int) ptr (cBool p)
+meta : Bool -> {[CURSES]} Eff Bool
+meta = windowSetAction (foreign FFI_C "meta" (Ptr -> Int -> IO Int))
 
-raw : NcursesIO ()
-raw = liftError $ foreign FFI_C "raw" (IO Int)
+nodelay : Bool -> {[CURSES]} Eff Bool
+nodelay = windowSetAction (foreign FFI_C "nodelay" (Ptr -> Int -> IO Int))
 
-noraw : NcursesIO ()
-noraw = liftError $ foreign FFI_C "noraw" (IO Int)
+raw : {[CURSES]} Eff Bool
+raw = boolAction (foreign FFI_C "raw" (IO Int))
 
-noqiflush : NcursesIO ()
-noqiflush = liftIO $ foreign FFI_C "noqiflush" (IO Unit)
+noraw : {[CURSES]} Eff Bool
+noraw =  boolAction (foreign FFI_C "noraw" (IO Int))
 
-qiflush : NcursesIO ()
-qiflush = liftIO $ foreign FFI_C "qiflush" (IO Unit)
+noqiflush : {[CURSES]} Eff ()
+noqiflush = nullAction (foreign FFI_C "noqiflush" (IO Unit))
 
-notimeout : Window -> Bool -> NcursesIO ()
-notimeout (WindowPtr ptr) p =
-  liftError $ foreign FFI_C "notimeout" (Ptr -> Int -> IO Int) ptr (cBool p)
+qiflush : {[CURSES]} Eff ()
+qiflush = nullAction (foreign FFI_C "qiflush" (IO Unit))
 
-timeout : Int -> NcursesIO ()
-timeout delay = liftIO $ foreign FFI_C "timeout" (Int -> IO Unit) delay
+notimeout : Bool -> {[CURSES]} Eff Bool
+notimeout = windowSetAction (foreign FFI_C "notimeout" (Ptr -> Int -> IO Int))
 
-wtimeout : Window -> Int -> NcursesIO ()
-wtimeout (WindowPtr ptr) delay =
-  liftIO $ foreign FFI_C "wtimeout" (Ptr -> Int -> IO Unit) ptr delay
+timeout : Int -> {[CURSES]} Eff ()
+timeout delay = call (NCAction go)
+  where go _ = foreign FFI_C "timeout" (Int -> IO Unit) delay
+
+wtimeout : Int -> {[CURSES]} Eff ()
+wtimeout delay = call (NCAction go)
+  where go (WindowPtr p) =
+    foreign FFI_C "wtimeout" (Ptr -> Int -> IO Unit) p delay
+
 
 -- fd is a file descriptor? What to do...
-typeahead : Int -> NcursesIO ()
-typeahead fd = liftError $ foreign FFI_C "typeahead" (Int -> IO Int) fd
+--typeahead : Int -> IO ()
+--typeahead fd =  foreign FFI_C "typeahead" (Int -> IO Int) fd
 
 --
 -- Output Options.
 --
 
-clearok : Window -> Bool -> NcursesIO ()
-clearok (WindowPtr ptr) p =
-  liftError $ foreign FFI_C "clearok" (Ptr -> Int -> IO Int) ptr (cBool p)
+clearok : Bool -> {[CURSES]} Eff Bool
+clearok = windowSetAction (foreign FFI_C "clearok" (Ptr -> Int -> IO Int))
 
-idlok : Window -> Bool -> NcursesIO ()
-idlok (WindowPtr ptr) p =
-  liftError $ foreign FFI_C "idlok" (Ptr -> Int -> IO Int) ptr (cBool p)
+idlok : Bool -> {[CURSES]} Eff Bool
+idlok = windowSetAction (foreign FFI_C "idlok" (Ptr -> Int -> IO Int))
 
-idcok : Window -> Bool -> NcursesIO ()
-idcok (WindowPtr ptr) p =
-  liftIO $ foreign FFI_C "idcok" (Ptr -> Int -> IO Unit) ptr (cBool p)
+idcok : Bool -> {[CURSES]} Eff ()
+idcok = windowSetAction' (foreign FFI_C "idcok" (Ptr -> Int -> IO Unit))
 
-immedok : Window -> Bool -> NcursesIO ()
-immedok (WindowPtr ptr) p =
-  liftIO $ foreign FFI_C "immedok" (Ptr -> Int -> IO Unit) ptr (cBool p)
+immedok : Bool -> {[CURSES]} Eff ()
+immedok = windowSetAction' (foreign FFI_C "immedok" (Ptr -> Int -> IO Unit))
 
-leaveok : Window -> Bool -> NcursesIO ()
-leaveok (WindowPtr ptr) p =
-  liftError $ foreign FFI_C "leaveok" (Ptr -> Int -> IO Int) ptr (cBool p)
+leaveok : Bool -> {[CURSES]} Eff Bool
+leaveok = windowSetAction (foreign FFI_C "leaveok" (Ptr -> Int -> IO Int))
 
-setscrreg : Int -> Int -> NcursesIO ()
-setscrreg top bot =
-  liftError $ foreign FFI_C "setscrreg" (Int -> Int -> IO Int) top bot
 
-wsetscrreg : Window -> Int -> Int -> NcursesIO ()
-wsetscrreg (WindowPtr ptr) top bot =
-  liftError $ foreign FFI_C "wsetscrreg" (Ptr -> Int -> Int -> IO Int) ptr top bot
+setscrreg : Int -> Int -> {[CURSES]} Eff Bool
+setscrreg top bot = call (NCAction go)
+  where go _ = map boolC (foreign FFI_C "setscrreg" (Int -> Int -> IO Int) top bot)
 
-scrollok : Window -> Bool -> NcursesIO ()
-scrollok (WindowPtr ptr) p =
-  liftError $ foreign FFI_C "scrollok" (Ptr -> Int -> IO Int) ptr (cBool p)
+wsetscrreg : Int -> Int -> {[CURSES]} Eff Bool
+wsetscrreg top bot = call (NCAction go)
+  where go (WindowPtr p) = map boolC $
+          foreign FFI_C "wsetscrreg" (Ptr -> Int -> Int -> IO Int) p top bot
 
-nl : NcursesIO ()
-nl = liftError $ foreign FFI_C "nl" (IO Int)
+scrollok : Bool -> {[CURSES]} Eff Bool
+scrollok = windowSetAction (foreign FFI_C "scrollok" (Ptr -> Int -> IO Int))
 
-nonl : NcursesIO ()
-nonl = liftError $ foreign FFI_C "nonl" (IO Int)
+nl : {[CURSES]} Eff Bool
+nl = call (NCAction go)
+  where go _ = map boolC (foreign FFI_C "nl" (IO Int))
 
-runNcurses : (NcursesError -> IO b) -> (a -> IO b) -> NcursesIO a -> IO b
-runNcurses f g nio = do
-  e <- unliftIO nio
-  case e of
-    Left err => f err
-    Right a => g a
-
-ncursesMain : NcursesIO () -> IO ()
-ncursesMain = runNcurses logError return where
-  logError NullWindow = putStrLn "NULL window"
+nonl : {[CURSES]} Eff Bool
+nonl = call (NCAction go)
+  where go _ = map boolC (foreign FFI_C "nonl" (IO Int))

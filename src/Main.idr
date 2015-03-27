@@ -1,28 +1,40 @@
 module Main
 
+import Effects
 import Ncurses
 
-loop : Window -> NcursesIO ()
-loop w = do
-  x <- getch w
+loop : {[CURSES]} Eff ()
+loop = do
+  x <- getch
   case x of
-    Just 27  => endwin
-    Just 81  => endwin
-    Just 113 => endwin
+    Just 27  => pure ()
+    Just 81  => pure ()
+    Just 113 => pure ()
     _        => do
-      putStrLn w ("Pressed <" ++ show x ++ ">")
-      (y, x) <- getYX w
-      move w (y - 1) x
-      loop w
+      putStrLn ("Pressed <" ++ show x ++ ">")
+      (y, x) <- getYX
+      move (y - 1) x
+      loop
 
-main : IO ()
-main = ncursesMain $ do
-  window <- initscr
+setup : {[CURSES]} Eff ()
+setup = do
   cbreak
   noecho
-  intrflush window False
+  intrflush False
   ln <- lines
   cl <- cols
-  putStrLn window $ (show ln) ++ " x " ++ (show cl)
-  putStrLn window "Press q or ESC to exit."
-  loop window
+  putStrLn (show ln ++ " x " ++ show cl)
+  putStrLn "Press q or ESC to exit."
+
+cursesMain : {[CURSES_OFF]} Eff ()
+cursesMain = do
+  s <- initscr
+  case s of
+    True => do
+      setup
+      loop
+      endwin
+    False => pure ()
+
+main : IO ()
+main = run cursesMain
