@@ -1,10 +1,10 @@
 #include "ncurses_extra.h"
 
-int getLines() {
+int idr_getLines() {
     return LINES;
 }
 
-int getCols() {
+int idr_getCols() {
     return COLS;
 }
 

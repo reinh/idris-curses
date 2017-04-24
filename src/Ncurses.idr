@@ -66,10 +66,10 @@ boolC _ = True
 
 
 lines : {[CURSES]} Eff Int
-lines = call (NCAction (const (foreign FFI_C "getLines" (IO Int))))
+lines = call (NCAction (const (foreign FFI_C "idr_getLines" (IO Int))))
 
 cols : {[CURSES]} Eff Int
-cols = call (NCAction (const (foreign FFI_C "getCols" (IO Int))))
+cols = call (NCAction (const (foreign FFI_C "idr_getCols" (IO Int))))
 
 --
 -- Window/Screen Management
