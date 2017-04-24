@@ -6,7 +6,7 @@ import Effects
 %include C "Ncurses/ncurses_extra.h"
 %link C "Ncurses/ncurses_extra.o"
 
-%access public
+%access public export
 
 data Window = WindowPtr Ptr
 
@@ -16,12 +16,12 @@ data Window = WindowPtr Ptr
 -- below just return Bool. There's probably a better way of handling
 -- failure in the Effect itself (rather than having to check on each
 -- individual operation.)
-abstract data Ncurses : Effect where
+data Ncurses : Effect where
   NewWindow   : {() ==> {res} if res then Window else ()} Ncurses Bool
   NCAction    : (Window -> IO a) -> {Window} Ncurses a
   CloseWindow : {Window ==> ()} Ncurses ()
 
-instance Handler Ncurses IO where
+Handler Ncurses IO where
   handle () NewWindow k = do
     p <- foreign FFI_C "initscr" (IO Ptr)
     isNull <- nullPtr p
@@ -50,12 +50,10 @@ CURSES_OFF = CURSES' ()
 
 -- These are used for converting from the C integer-ey representation
 -- to actual bools and vice versa!
-private
 cBool : Bool -> Int
 cBool True = 1
 cBool False = 0
 
-private
 boolC : Int -> Bool
 boolC 0 = False
 boolC _ = True
@@ -63,7 +61,6 @@ boolC _ = True
 --
 -- Global Variables
 --
-
 
 lines : {[CURSES]} Eff Int
 lines = call (NCAction (const (foreign FFI_C "idr_getLines" (IO Int))))
@@ -121,20 +118,16 @@ getYX = call (NCAction go)
 -- Wrapping helpers for curses operations
 --
 
-private
 boolAction : IO Int -> {[CURSES]} Eff Bool
 boolAction f = call (NCAction (const (map boolC f)))
 
-private
 nullAction : IO () -> {[CURSES]} Eff ()
 nullAction f = call (NCAction (const f))
 
-private
 windowSetAction : (Ptr -> Int -> IO Int) -> (Bool -> {[CURSES]} Eff Bool)
 windowSetAction f b = call (NCAction go)
   where go (WindowPtr p) = map boolC (f p (cBool b))
 
-private
 windowSetAction' : (Ptr -> Int -> IO ()) -> (Bool -> {[CURSES]} Eff ())
 windowSetAction' f b = call (NCAction go)
   where go (WindowPtr p) = f p (cBool b)
