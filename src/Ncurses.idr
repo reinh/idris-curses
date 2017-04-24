@@ -193,7 +193,7 @@ timeout delay = call (NCAction go)
 wtimeout : Int -> {[CURSES]} Eff ()
 wtimeout delay = call (NCAction go)
   where go (WindowPtr p) =
-    foreign FFI_C "wtimeout" (Ptr -> Int -> IO Unit) p delay
+          foreign FFI_C "wtimeout" (Ptr -> Int -> IO Unit) p delay
 
 
 -- fd is a file descriptor? What to do...
